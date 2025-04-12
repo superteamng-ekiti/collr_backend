@@ -1,8 +1,11 @@
-import express, { Request, Response } from "express";
+import express, { type Request, type Response } from "express";
+
 import cors from "cors";
 import { MONGO_URI, PORT } from "./utils/environment.ts";
 import { log } from "./utils/globals.ts";
 import { connect } from "./utils/database.ts";
+import { auth_router } from "./routes/auth.routes.ts";
+import { scrape_router } from "./routes/scraper.routes.ts";
 
 const app = express();
 
@@ -13,6 +16,9 @@ app.use(
   })
 );
 
+app.use("/api", scrape_router);
+app.use("/api/auth", auth_router);
+
 app.get("/", (req: Request, res: Response) => {
   res.status(200).json({
     message: "yayy 😌 you hit the home route",
@@ -21,7 +27,7 @@ app.get("/", (req: Request, res: Response) => {
   return;
 });
 
-app.all("/*", (req: Request, res: Response) => {
+app.all("/*any", (req: Request, res: Response) => {
   res.status(404).json({
     message: "looks like you hit a wrong endpoint",
     response: "route doesnt exist"
@@ -30,7 +36,7 @@ app.all("/*", (req: Request, res: Response) => {
 });
 
 app.listen(PORT, async () => {
-  log("SERVER STARTED");
+  log("SERVER STARTED AT", PORT);
   log("===== CONNECTING TO MONGODB =====");
   await connect(MONGO_URI);
 });

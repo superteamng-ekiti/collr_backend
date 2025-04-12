@@ -16,6 +16,7 @@ export type category =
 interface IUser {
   auth_id: string;
   wallet_address: string;
+  email: string;
   location: string;
   profile_description: string;
   gender: "m" | "f" | "o";
@@ -33,12 +34,26 @@ interface IUser {
 interface IConnectAccount {
   is_connected: boolean;
   username: string | undefined;
-  auth_id: string | undefined;
+  followers: string | undefined;
 }
+
+const ConnectAccountSchema = new Schema<IConnectAccount>(
+  {
+    is_connected: { type: Boolean, default: false },
+    username: { type: String, default: undefined },
+    followers: { type: String, default: undefined }
+  },
+  { _id: false } // prevents nested _id fields
+);
 
 const UserSchema: Schema<IUser> = new mongoose.Schema({
   auth_id: String,
   wallet_address: String,
+  email: {
+    type: String,
+    required: [true, "provide email"],
+    unique: true
+  },
   location: String,
   profile_description: String,
   gender: {
@@ -51,16 +66,10 @@ const UserSchema: Schema<IUser> = new mongoose.Schema({
   genre: [String],
   preview_videos: [String],
   is_account_connected: {
-    default: {
-      tiktok: { is_connected: false, username: undefined, auth_id: undefined },
-      x: { is_connected: false, username: undefined, auth_id: undefined },
-      youtube: { is_connected: false, username: undefined, auth_id: undefined },
-      instagram: {
-        is_connected: false,
-        username: undefined,
-        auth_id: undefined
-      }
-    }
+    tiktok: { type: ConnectAccountSchema, default: () => ({}) },
+    instagram: { type: ConnectAccountSchema, default: () => ({}) },
+    x: { type: ConnectAccountSchema, default: () => ({}) },
+    youtube: { type: ConnectAccountSchema, default: () => ({}) }
   }
 });
 
