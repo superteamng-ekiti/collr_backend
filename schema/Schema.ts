@@ -21,7 +21,7 @@ interface IUser {
   profile_description: string;
   gender: "m" | "f" | "o";
   connected_account: "tiktok" | "instagram" | "x" | "youtube";
-  genre: category[];
+  categories: category[];
   is_account_connected: {
     tiktok: IConnectAccount;
     instagram: IConnectAccount;
@@ -63,7 +63,7 @@ const UserSchema: Schema<IUser> = new mongoose.Schema({
   connected_account: {
     type: String
   },
-  genre: [String],
+  categories: [String],
   preview_videos: [String],
   is_account_connected: {
     tiktok: { type: ConnectAccountSchema, default: () => ({}) },
