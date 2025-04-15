@@ -2,6 +2,12 @@ import { type Request, type Response } from "express";
 import axios from "axios";
 import { scrape_tiktok_profile } from "../core/tiktok.ts";
 import UserSchema from "../schema/Schema.ts";
+import crypto from "crypto";
+import { CLIENT_KEY, TIKTOK_SECRET } from "../utils/environment.ts";
+
+const SERVER_ENDPOINT_REDIRECT =
+  "https://f1c4-102-89-83-74.ngrok-free.app/profile";
+// || "https://collr.vercel.app";
 
 const scrape_tiktok = async (req: Request, res: Response) => {
   try {
@@ -25,7 +31,7 @@ const scrape_tiktok = async (req: Request, res: Response) => {
         {
           profile_description: tiktok_data.bio,
           "is_account_connected.tiktok.followers": tiktok_data.followers,
-          "is_account_connected.tiktok.is_conected": true,
+          "is_account_connected.tiktok.is_conected": false,
           "is_account_connected.tiktok.username": username
         },
         { new: true }
@@ -54,60 +60,42 @@ const scrape_tiktok = async (req: Request, res: Response) => {
 
 const scrape_tiktok_videos = async (req: Request, res: Response) => {
   try {
-    const { username } = req.params;
-    if (!username) {
-      res.status(400).json({
-        message: "Missing TikTok username in params"
+    const { email } = req.body;
+    if (!email) {
+      res.status(409).json({
+        message: "Missing email in body",
+        response: "Missing email in body"
       });
       return;
     }
 
+    const existing_user = await UserSchema.findOne({ email });
+
+    if (!existing_user) {
+      res.status(409).json({
+        response: "something went wrong trying to find you",
+        message: "please try registering"
+      });
+      return;
+    }
     // Step 1: Fetch profile to extract secUid
-    const profileHTML = await axios.get(`https://www.tiktok.com/@${username}`, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9"
+    const response = await axios.post(
+      "https://open.tiktokapis.com/v2/video/list/?fields=id,title,video_description,duration,cover_image_url,embed_link",
+
+      {
+        max_count: 20
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${existing_user.is_account_connected.tiktok.access_token}`,
+          "Content-Type": "application/json"
+        }
       }
-    });
-
-    const secUidMatch = profileHTML.data.match(/"secUid":"(.*?)"/);
-    if (!secUidMatch || !secUidMatch[1]) {
-      res.status(404).json({
-        message: "Could not extract secUid from TikTok profile page"
-      });
-      return;
-    }
-
-    const secUid = secUidMatch[1];
-
-    console.log(secUidMatch, secUid);
-
-    // Step 2: Hit the item_list API with secUid
-    const apiURL = `https://www.tiktok.com/api/post/item_list/?secUid=${secUid}&count=5&cursor=0&aid=1988`;
-
-    const apiResponse = await axios.get(apiURL, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
-        Referer: `https://www.tiktok.com/@${username}`
-      }
-    });
-
-    console.log(apiResponse.data);
-
-    const videos = apiResponse.data.itemList.map((item: any) => ({
-      id: item.id,
-      description: item.desc,
-      cover: item.video.cover,
-      video_url: item.video.playAddr,
-      stats: item.stats
-    }));
+    );
 
     res.status(200).json({
-      username,
-      count: videos.length,
-      videos
+      response: response.data.data,
+      message: "that went well... 😅"
     });
     return;
   } catch (err) {
@@ -120,104 +108,127 @@ const scrape_tiktok_videos = async (req: Request, res: Response) => {
   }
 };
 
-const scrape_and_update_tiktok = async (req: Request, res: Response) => {
+const auth_tiktok = async (req: Request, res: Response) => {
   try {
-    const { username } = req.params;
-    const { email } = req.body;
+    const CLIENT_KEY_ = CLIENT_KEY;
 
-    if (!username) {
-      res.status(400).json({
-        response: "Missing TikTok username in params",
-        message: "please provide a username"
+    const csrfState = Math.random().toString(36).substring(2);
+    res.cookie("csrfState", csrfState, { maxAge: 60000 });
+
+    const codeVerifier = crypto.randomBytes(32).toString("base64url");
+
+    // Step 2: Create a code_challenge using SHA256
+    const codeChallenge = crypto
+      .createHash("sha256")
+      .update(codeVerifier)
+      .digest()
+      .toString("base64url");
+
+    // Step 3: Store code_verifier securely (e.g. in a cookie)
+    res.cookie("codeVerifier", codeVerifier, { maxAge: 60000 });
+
+    // the following params need to be in `application/x-www-form-urlencoded` format.
+    let url = "https://www.tiktok.com/v2/auth/authorize/";
+    url += `?client_key=${CLIENT_KEY_}`;
+    url += "&scope=user.info.basic,video.list";
+    url += "&response_type=code";
+    url += `&redirect_uri=${SERVER_ENDPOINT_REDIRECT}`;
+    url += `&state=${csrfState}`;
+    url += "&code_challenge_method=S256";
+    url += `&code_challenge=${codeChallenge}`;
+
+    res.redirect(url);
+  } catch (error) {
+    res.status(409).json({
+      response: "something went wrong " + error,
+      message: "something went wrong trying to fetch your tiktok profile"
+    });
+  }
+};
+
+const get_tiktok_access_token = async (req: Request, res: Response) => {
+  try {
+    const { code, email } = req.body;
+
+    if (!code || !email) {
+      res.status(409).json({
+        response: "please provide auth code and email in body",
+        message: "something went wrong with that request"
       });
-      return;
     }
 
-    const profileURL = `https://www.tiktok.com/@${username}`;
-    const html = await axios.get(profileURL, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-        Referer: "https://www.tiktok.com/",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Cache-Control": "no-cache",
-        Pragma: "no-cache"
+    let response = await axios.post<IAccessResponse>(
+      "https://open.tiktokapis.com/v2/oauth/token/",
+      new URLSearchParams({
+        client_key: CLIENT_KEY,
+        client_secret: TIKTOK_SECRET,
+        code: code,
+        grant_type: "authorization_code",
+        redirect_uri: SERVER_ENDPOINT_REDIRECT
+      }),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Cache-Control": "no-cache"
+        }
       }
-    });
+    );
 
-    const rawJSON = html.data.match(
-      /<script id="SIGI_STATE"[^>]*>(.*?)<\/script>/
-    )?.[1];
-    if (!rawJSON) {
-      res.status(500).json({
-        message: "Could not extract TikTok data from profile page"
+    if (response.data.access_token) {
+      await UserSchema.findOneAndUpdate(
+        { email },
+        {
+          "is_account_connected.tiktok.is_connected": true,
+          "is_account_connected.tiktok.access_token": response.data.access_token
+        }
+      );
+
+      res.status(200).json({
+        response: "that went well.. 🙂",
+        message: "that went well.. 🙂"
+      });
+      return;
+    } else {
+      res.status(409).json({
+        response: response.data,
+        message: "something went wrong trying to fetch your tiktok profile"
       });
       return;
     }
-
-    const data = JSON.parse(rawJSON);
-    const user = data?.UserModule?.users?.[username];
-    const items = data?.ItemList?.user?.[username]?.list || [];
-    const itemDetails = data?.ItemModule || {};
-
-    if (!user) {
-      res.status(404).json({
-        message: "User not found in extracted TikTok data"
-      });
-      return;
-    }
-
-    // Get the latest videos
-    const videos = items.map((id: string) => {
-      const item = itemDetails[id];
-      return {
-        id,
-        description: item?.desc,
-        cover: item?.video?.cover,
-        video_url: item?.video?.playAddr,
-        stats: item?.stats
-      };
-    });
-
-    // Update or respond
-    // const existing_user = await UserSchema.findOne({ email });
-
-    // if (existing_user) {
-    //   const updated_user = await UserSchema.findByIdAndUpdate(
-    //     existing_user.id,
-    //     {
-    //       profile_description: user.signature,
-    //       "is_account_connected.tiktok.followers": user.followers,
-    //       "is_account_connected.tiktok.is_conected": true,
-    //       "is_account_connected.tiktok.username": username
-    //     },
-    //     { new: true }
-    //   );
-
-    res.status(200).json({
-      response: "updated_user",
-      videos,
-      message: "TikTok data scraped and user updated successfully"
-    });
-    return;
-    // } else {
-    //   res.status(404).json({
-    //     response: null,
-    //     message: "User not found in database, please register first"
-    //   });
-    //   return;
-    // }
-  } catch (error: any) {
-    console.error("TikTok scrape error:", error.message);
-    res.status(500).json({
-      response: null,
-      message: "Something went wrong while scraping TikTok",
-      error: error.message
+  } catch (error) {
+    res.status(409).json({
+      response: "something went wrong " + error,
+      message: "something went wrong trying to fetch your tiktok profile"
     });
     return;
   }
 };
 
-export { scrape_tiktok, scrape_tiktok_videos, scrape_and_update_tiktok };
+export {
+  scrape_tiktok,
+  scrape_tiktok_videos,
+  auth_tiktok,
+  get_tiktok_access_token
+};
+
+interface IAccessResponse {
+  access_token: string;
+  expires_in: number;
+  open_id: string;
+  refresh_expires_in: number;
+  refresh_token: string;
+  scope: string;
+  token_type: string;
+}
+
+interface IAccessError {
+  error: string;
+  error_description: string;
+  log_id: string;
+}
+
+// video.list
+
+// url += "&scope=user.info.basic";
+
+// ttAZTOsFwxxemDUAs2ilyyW9bM1Q5OhxGse1aeIDShZ7MBIxvJR7_kY-AFq_w0hpoxAe9mf-6-hNKqMgCNmvwirvT_FIA7Z0bKL5Dukz0KU1AVyfECr9nx-btZfY60OGbVqN0u8O5Vbqz7dWz72EhW8jzn5CTBBM4gStU7r9W28%2A3%215701.va

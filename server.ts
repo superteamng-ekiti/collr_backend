@@ -1,4 +1,5 @@
 import express, { type Request, type Response } from "express";
+import cookieParser from "cookie-parser";
 
 import cors from "cors";
 import { MONGO_URI, PORT } from "./utils/environment.ts";
@@ -9,6 +10,7 @@ import { scrape_router } from "./routes/scraper.routes.ts";
 
 const app = express();
 
+app.use(cookieParser());
 app.use(express.json());
 app.use(
   cors({

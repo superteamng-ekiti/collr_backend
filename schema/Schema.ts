@@ -35,13 +35,15 @@ interface IConnectAccount {
   is_connected: boolean;
   username: string | undefined;
   followers: string | undefined;
+  access_token: string | undefined;
 }
 
 const ConnectAccountSchema = new Schema<IConnectAccount>(
   {
     is_connected: { type: Boolean, default: false },
     username: { type: String, default: undefined },
-    followers: { type: String, default: undefined }
+    followers: { type: String, default: undefined },
+    access_token: { type: String, default: undefined }
   },
   { _id: false } // prevents nested _id fields
 );
